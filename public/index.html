@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notes de réunion</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <h1>Notes</h1>
+      <button id="new-note" class="btn primary" type="button">+ Nouvelle</button>
+    </div>
+    <input id="search" class="search" type="search" placeholder="Rechercher…" aria-label="Rechercher une note">
+    <ul id="note-list" class="note-list"></ul>
+    <p id="engine-info" class="engine-info"></p>
+  </aside>
+
+  <main id="editor" class="editor" hidden>
+    <header class="editor-head">
+      <input id="title" class="title" type="text" aria-label="Titre de la note">
+      <div class="head-actions">
+        <span id="save-state" class="muted"></span>
+        <button id="export-md" class="btn" type="button">Exporter .md</button>
+        <button id="export-csv" class="btn" type="button">Exporter .csv</button>
+        <button id="delete-note" class="btn danger" type="button">Supprimer</button>
+      </div>
+    </header>
+
+    <section class="recorder" aria-label="Enregistrement de réunion">
+      <div class="recorder-options">
+        <label>Source
+          <select id="source">
+            <option value="meeting">Réunion : son de l'ordinateur (onglet / écran) + micro</option>
+            <option value="mic">Micro uniquement (réunion en présentiel)</option>
+          </select>
+        </label>
+        <label>Transcription
+          <select id="mode">
+            <option value="server">Serveur (Whisper) : capte tous les participants</option>
+            <option value="browser">Navigateur (Chrome/Edge) : micro uniquement</option>
+          </select>
+        </label>
+        <label class="check"><input id="include-mic" type="checkbox" checked> Inclure mon micro</label>
+        <label class="check"><input id="auto-analyze" type="checkbox" checked> Analyse en direct</label>
+      </div>
+      <div class="recorder-controls">
+        <button id="record" class="btn record" type="button">● Démarrer l'enregistrement</button>
+        <span id="timer" class="timer">00:00</span>
+        <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
+        <button id="download-audio" class="btn" type="button" hidden>Télécharger l'audio</button>
+      </div>
+      <p id="rec-status" class="status" role="status"></p>
+    </section>
+
+    <div class="columns">
+      <section class="panel">
+        <h2>Mes notes</h2>
+        <textarea id="content" placeholder="Prenez vos notes ici (noms des participants, contexte…). Elles servent aussi à l'analyse."></textarea>
+        <div class="panel-head">
+          <h2>Transcription <span id="transcript-count" class="muted"></span></h2>
+          <button id="clear-transcript" class="btn small" type="button">Effacer</button>
+        </div>
+        <div id="transcript" class="transcript" aria-live="polite"></div>
+        <div id="interim" class="interim"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Idées et informations</h2>
+          <button id="analyze" class="btn primary" type="button">Analyser maintenant</button>
+        </div>
+        <p id="analysis-status" class="status"></p>
+        <div class="summary">
+          <h3>Résumé</h3>
+          <p id="summary" contenteditable="true" data-placeholder="Le résumé apparaîtra après l'analyse."></p>
+        </div>
+        <div id="tables"></div>
+      </section>
+    </div>
+  </main>
+
+  <div id="empty" class="empty">
+    <p>Créez une note pour commencer.</p>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

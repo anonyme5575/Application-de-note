@@ -1,0 +1,31 @@
+{
+  "name": "application-de-note",
+  "version": "1.0.0",
+  "description": "Application de notes avec enregistrement de réunions en direct, transcription et extraction en tableaux",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anonyme5575/Application-de-note.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/anonyme5575/Application-de-note/issues"
+  },
+  "homepage": "https://github.com/anonyme5575/Application-de-note#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "zod": "^4.6.5"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  }
+}
