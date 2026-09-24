@@ -18,6 +18,8 @@ export function isHallucination(text) {
   return !text.trim() || HALLUCINATIONS.some((re) => re.test(text));
 }
 
+const SILENCE_RMS = 0.004;
+
 function pickMimeType() {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
   return candidates.find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
@@ -35,6 +37,9 @@ export class MeetingCapture {
 
   async start() {
     this.ctx = new AudioContext();
+    // Créé après un await, le contexte peut démarrer « suspendu » (politique
+    // d'autolecture) : il ne transmettrait alors que du silence.
+    const resumed = this.ctx.resume();
     this.dest = this.ctx.createMediaStreamDestination();
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 1024;
@@ -79,6 +84,7 @@ export class MeetingCapture {
       }
     }
 
+    await resumed;
     this.stream = this.dest.stream;
     this.mimeType = pickMimeType();
     this.levelBuffer = new Float32Array(this.analyser.fftSize);
@@ -127,8 +133,9 @@ export class MeetingCapture {
       rec.onstop = () => {
         clearInterval(sampler);
         const blob = new Blob(chunks, { type: rec.mimeType || this.mimeType });
-        // Segment silencieux : inutile de l'envoyer (et source d'hallucinations).
-        if (blob.size > 0 && peak > 0.01) onSegment(blob, startT);
+        // Segment silencieux (sous ≈ -48 dBFS) : inutile de l'envoyer, et source
+        // d'hallucinations. Seuil bas pour ne pas perdre une voix lointaine.
+        if (blob.size > 0 && peak > SILENCE_RMS) onSegment(blob, startT);
       };
       rec.start();
       this.segmentTimer = setTimeout(() => {

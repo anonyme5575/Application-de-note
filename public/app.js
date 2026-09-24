@@ -1,4 +1,5 @@
-import { TABLES, formatTime, toCsv, toMarkdown, transcriptText } from "./export.js";
+import { formatTime, toCsv, toMarkdown, transcriptText } from "./export.js";
+import { renderTables } from "./tables.js";
 import { BrowserRecognizer, MeetingCapture, isHallucination } from "./recorder.js";
 
 const SEGMENT_SECONDS = 20;
@@ -14,7 +15,14 @@ const el = {
   recStatus: $("rec-status"), transcript: $("transcript"), transcriptCount: $("transcript-count"),
   interim: $("interim"), clearTranscript: $("clear-transcript"),
   analyze: $("analyze"), analysisStatus: $("analysis-status"), summary: $("summary"), tables: $("tables"),
+  phoneBtn: $("phone-btn"), phoneDialog: $("phone-dialog"), phoneQr: $("phone-qr"), phoneUrls: $("phone-urls"),
+  phoneStatus: $("phone-status"), phoneToken: $("phone-token"), remoteBanner: $("remote-banner"), remoteStart: $("remote-start"),
+  remoteDismiss: $("remote-dismiss"),
 };
+
+// Identifie cet onglet : le serveur renvoie l'origine de chaque modification,
+// ce qui permet d'ignorer ses propres échos.
+const CLIENT_ID = crypto.randomUUID();
 
 const state = {
   config: { claude: false, serverTranscription: false },
@@ -37,7 +45,10 @@ const state = {
 async function api(path, options = {}) {
   const res = await fetch(path, {
     ...options,
-    headers: options.body instanceof FormData ? {} : { "Content-Type": "application/json" },
+    headers: {
+      "X-Client-Id": CLIENT_ID,
+      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+    },
   });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
@@ -236,6 +247,8 @@ async function startRecording() {
   for (const input of [el.source, el.mode, el.includeMic, el.newNote, el.del]) input.disabled = true;
   state.lastLiveAnalysis = performance.now();
   state.tickTimer = setInterval(tick, 100);
+  el.remoteBanner.hidden = true;
+  reportPcState();
   updateRecStatus(capture.warnings.join(" "));
 }
 
@@ -277,6 +290,7 @@ async function stopRecording() {
   el.record.classList.remove("active");
   for (const input of [el.source, el.mode, el.includeMic, el.newNote, el.del]) input.disabled = false;
 
+  reportPcState();
   const audio = await capture.stop();
   if (audio.size) {
     state.audioUrl = URL.createObjectURL(audio);
@@ -337,81 +351,86 @@ async function runAnalysis({ auto = false } = {}) {
 function renderAnalysis() {
   const analysis = state.note.analysis;
   el.summary.textContent = analysis.resume ?? "";
-  el.tables.replaceChildren(...TABLES.map((table) => tableBlock(table, analysis)));
+  renderTables(el.tables, analysis, scheduleSave);
 }
 
-function tableBlock(table, analysis) {
-  const rows = (analysis[table.key] ??= []);
-  const block = document.createElement("div");
-  block.className = "table-block";
+// ---------------------------------------------------------------------------
+// Téléphone : jumelage, synchronisation en direct, télécommande
 
-  const head = document.createElement("div");
-  head.className = "panel-head";
-  const h3 = document.createElement("h3");
-  h3.textContent = table.label;
-  const badge = document.createElement("span");
-  badge.className = "badge";
-  badge.textContent = rows.length;
-  h3.append(badge);
-  const add = document.createElement("button");
-  add.className = "btn small";
-  add.type = "button";
-  add.textContent = "+ Ajouter";
-  add.addEventListener("click", () => {
-    rows.push(Object.fromEntries(table.cols.map(([k]) => [k, ""])));
-    renderAnalysis();
-    scheduleSave();
-    el.tables.querySelector(`[data-table="${table.key}"] tbody tr:last-child td`)?.focus();
-  });
-  head.append(h3, add);
+function reportPcState() {
+  api("/api/pc-state", {
+    method: "POST",
+    body: JSON.stringify({ recording: Boolean(state.capture), noteId: state.capture ? state.note?.id : null }),
+  }).catch(() => {});
+}
 
-  const t = document.createElement("table");
-  t.dataset.table = table.key;
-  const thead = t.createTHead().insertRow();
-  for (const [, label] of table.cols) {
-    const th = document.createElement("th");
-    th.textContent = label;
-    thead.append(th);
-  }
-  thead.append(document.createElement("th"));
+function connectEvents() {
+  const source = new EventSource("/api/events?role=pc");
+  source.onmessage = (e) => handleEvent(JSON.parse(e.data)).catch(console.error);
+}
 
-  const tbody = t.createTBody();
-  if (!rows.length) {
-    const td = tbody.insertRow().insertCell();
-    td.colSpan = table.cols.length + 1;
-    td.className = "empty-row";
-    td.textContent = "Aucun élément";
-  }
-  rows.forEach((row, index) => {
-    const tr = tbody.insertRow();
-    for (const [key] of table.cols) {
-      const td = tr.insertCell();
-      td.contentEditable = "true";
-      td.textContent = row[key] ?? "";
-      td.addEventListener("input", () => {
-        row[key] = td.textContent;
-        scheduleSave();
-      });
+async function handleEvent(event) {
+  if (event.type === "note" && event.source !== CLIENT_ID) {
+    await refreshList();
+    if (event.id !== state.note?.id) return;
+    if (event.deleted) {
+      if (state.capture) return;
+      state.note = null;
+      el.editor.hidden = true;
+      el.empty.hidden = false;
+      return;
     }
-    const del = tr.insertCell();
-    del.className = "del";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.title = "Supprimer la ligne";
-    btn.textContent = "✕";
-    btn.addEventListener("click", () => {
-      rows.splice(index, 1);
+    // Recharge la note modifiée depuis le téléphone, sauf si ce PC a des
+    // modifications non enregistrées ou enregistre en ce moment.
+    if (!state.capture && !state.saveTimer && !state.analyzing) {
+      const fresh = await api(`/api/notes/${event.id}`);
+      if (state.note?.id !== fresh.id) return;
+      state.note = fresh;
+      if (document.activeElement !== el.title) el.title.value = fresh.title;
+      if (document.activeElement !== el.content) el.content.value = fresh.content;
+      renderTranscript();
       renderAnalysis();
-      scheduleSave();
-    });
-    del.append(btn);
-  });
+    }
+  } else if (event.type === "command") {
+    await handleCommand(event);
+  }
+}
 
-  const wrap = document.createElement("div");
-  wrap.className = "table-wrap";
-  wrap.append(t);
-  block.append(head, wrap);
-  return block;
+async function handleCommand({ action, noteId }) {
+  if (action === "stop") return stopRecording();
+  if (action === "analyze") {
+    if (noteId && noteId !== state.note?.id) await openNote(noteId);
+    return runAnalysis();
+  }
+  if (action === "start" && !state.capture) {
+    if (noteId && noteId !== state.note?.id) await openNote(noteId);
+    // Le navigateur exige un clic sur le PC pour partager l'écran ou l'onglet.
+    el.remoteBanner.hidden = false;
+    el.remoteStart.focus();
+    document.title = "▶ Démarrage demandé — Notes de réunion";
+  }
+}
+
+async function openPhoneDialog() {
+  el.phoneDialog.showModal();
+  setStatus(el.phoneStatus, "");
+  try {
+    const pairing = await api("/api/pairing");
+    el.phoneQr.innerHTML = pairing.svg; // SVG généré par le serveur (bibliothèque qrcode).
+    el.phoneToken.textContent = pairing.token;
+    el.phoneUrls.replaceChildren(
+      ...pairing.urls.map(({ url, name }) => {
+        const li = document.createElement("li");
+        li.textContent = `${url} (${name})`;
+        return li;
+      }),
+    );
+    if (!pairing.urls.length) {
+      setStatus(el.phoneStatus, "Aucun réseau détecté. Connectez le PC au Wi-Fi, ou branchez le téléphone en USB et activez le partage de connexion USB, puis rouvrez cette fenêtre.", true);
+    }
+  } catch (err) {
+    setStatus(el.phoneStatus, err.message, true);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +468,15 @@ function applyConfig() {
 
 function bindEvents() {
   el.newNote.addEventListener("click", newNote);
+  el.phoneBtn.addEventListener("click", openPhoneDialog);
+  el.remoteStart.addEventListener("click", () => {
+    document.title = "Notes de réunion";
+    startRecording();
+  });
+  el.remoteDismiss.addEventListener("click", () => {
+    el.remoteBanner.hidden = true;
+    document.title = "Notes de réunion";
+  });
   el.search.addEventListener("input", renderList);
   el.title.addEventListener("input", () => {
     state.note.title = el.title.value;
@@ -493,6 +521,7 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
+  connectEvents();
   state.config = await api("/api/config");
   applyConfig();
   await refreshList();

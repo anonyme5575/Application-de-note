@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Notes Réunion</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="back" class="icon-btn" type="button" aria-label="Retour" hidden>‹</button>
+    <h1 id="view-title">Notes</h1>
+    <button id="link-chip" class="chip" type="button"></button>
+    <button id="open-settings" class="icon-btn" type="button" aria-label="Réglages">⚙</button>
+  </header>
+
+  <!-- Liste des notes -->
+  <main id="view-list" class="view">
+    <div class="new-buttons">
+      <button id="new-local" class="btn primary" type="button">+ Note sur le téléphone</button>
+      <button id="new-pc" class="btn" type="button" hidden>+ Note sur le PC</button>
+    </div>
+    <section id="pc-section" hidden>
+      <h2>💻 Sur le PC</h2>
+      <ul id="pc-list" class="note-list"></ul>
+    </section>
+    <section>
+      <h2>📱 Sur ce téléphone</h2>
+      <ul id="local-list" class="note-list"></ul>
+    </section>
+    <p id="list-status" class="status"></p>
+  </main>
+
+  <!-- Note -->
+  <main id="view-note" class="view" hidden>
+    <input id="title" class="title" type="text" aria-label="Titre de la note">
+    <p id="note-where" class="muted"></p>
+
+    <section class="card recorder">
+      <button id="record" class="btn record" type="button">🎙 Enregistrer avec le micro du téléphone</button>
+      <div class="rec-line">
+        <span id="timer" class="timer">00:00</span>
+        <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
+      </div>
+      <div id="pc-controls" hidden>
+        <button id="pc-record" class="btn" type="button"></button>
+        <p id="pc-state" class="muted"></p>
+      </div>
+      <label class="check"><input id="auto-analyze" type="checkbox" checked> Analyse en direct</label>
+      <p id="services" class="muted"></p>
+      <p id="rec-status" class="status" role="status"></p>
+    </section>
+
+    <h2>Mes notes</h2>
+    <textarea id="content" placeholder="Participants, contexte… (servent aussi à l'analyse)"></textarea>
+
+    <div class="row-head">
+      <h2>Idées et informations</h2>
+      <button id="analyze" class="btn primary small" type="button">Analyser</button>
+    </div>
+    <p id="analysis-status" class="status"></p>
+    <div class="card">
+      <h3>Résumé</h3>
+      <p id="summary" contenteditable="true" data-placeholder="Le résumé apparaîtra après l'analyse."></p>
+    </div>
+    <div id="tables"></div>
+
+    <div class="row-head">
+      <h2>Transcription <span id="transcript-count" class="muted"></span></h2>
+    </div>
+    <div id="transcript" class="transcript card"></div>
+
+    <div class="actions">
+      <button id="share-md" class="btn" type="button">Partager (.md)</button>
+      <button id="share-csv" class="btn" type="button">Partager (.csv)</button>
+      <button id="delete-note" class="btn danger" type="button">Supprimer</button>
+    </div>
+  </main>
+
+  <!-- Réglages -->
+  <main id="view-settings" class="view" hidden>
+    <section class="card">
+      <h2>Connexion au PC</h2>
+      <p id="pair-status"></p>
+      <ol class="help">
+        <li>Sur le PC, lancez l'application de notes et ouvrez-la dans le navigateur.</li>
+        <li>Reliez le téléphone au PC : même Wi-Fi, <strong>ou</strong> câble USB + Partage de connexion USB activé sur le téléphone.</li>
+        <li>Sur le PC, cliquez sur « 📱 Connecter le téléphone », puis scannez le QR code.</li>
+      </ol>
+      <button id="scan" class="btn primary" type="button">Scanner le QR code du PC</button>
+      <details>
+        <summary>Saisir l'adresse à la main</summary>
+        <label>Adresse du PC <input id="manual-url" type="url" placeholder="http://192.168.1.20:3000" inputmode="url"></label>
+        <label>Clé (affichée sous le QR code) <input id="manual-token" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <button id="manual-connect" class="btn" type="button">Se connecter</button>
+      </details>
+      <button id="unpair" class="btn danger" type="button" hidden>Oublier ce PC</button>
+    </section>
+
+    <section class="card">
+      <h2>Mode téléphone seul</h2>
+      <p class="muted">Utilisé quand le PC n'est pas connecté. Les clés restent sur ce téléphone et sont envoyées uniquement au service concerné.</p>
+      <label>Clé API Anthropic (analyse par Claude) <input id="anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…"></label>
+      <label>Clé API de transcription (Whisper) <input id="whisper-key" type="password" autocomplete="off" placeholder="sk-…"></label>
+      <details>
+        <summary>Service de transcription</summary>
+        <label>URL <input id="whisper-url" type="url" inputmode="url"></label>
+        <label>Modèle <input id="whisper-model" type="text" autocapitalize="off"></label>
+      </details>
+      <button id="save-keys" class="btn primary" type="button">Enregistrer</button>
+      <p id="keys-status" class="status"></p>
+    </section>
+
+    <p class="muted small">Prévenez les participants avant d'enregistrer une réunion. Laissez l'app ouverte pendant l'enregistrement : Android coupe le micro des apps en arrière-plan.</p>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

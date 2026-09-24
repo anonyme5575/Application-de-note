@@ -4,17 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-
-export function emptyAnalysis() {
-  return {
-    resume: "",
-    decisions: [],
-    actions: [],
-    idees: [],
-    informations: [],
-    questions: [],
-  };
-}
+import { emptyAnalysis } from "./heuristic.js";
 
 export class NoteStore {
   constructor(dataDir) {

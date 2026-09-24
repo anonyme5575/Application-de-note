@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { analyzeHeuristic, splitSentences } from "../src/analyze.js";
+import { analyzeHeuristic, splitSentences } from "../src/heuristic.js";
 
 const TRANSCRIPT = `Bonjour à tous, on commence la réunion. Le budget du projet est de 45 000 € pour 2026.
 On a décidé de lancer la version mobile en premier. Marie va préparer la maquette avant vendredi.

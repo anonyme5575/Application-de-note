@@ -159,6 +159,15 @@ td.del button:hover { color: var(--danger); }
 td.empty-row { color: var(--muted); font-style: italic; }
 .badge { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); font-size: 11px; text-align: center; margin-left: 4px; }
 
+.remote-banner { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; border-radius: 8px; border: 2px solid var(--record); }
+.phone-dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); max-width: 460px; width: calc(100% - 32px); }
+.phone-dialog::backdrop { background: rgb(0 0 0 / .45); }
+.phone-dialog ol { padding-left: 18px; line-height: 1.5; }
+.phone-qr { background: #fff; border-radius: 8px; padding: 8px; width: 260px; height: 260px; margin: 12px auto; }
+.phone-qr svg { width: 100%; height: 100%; display: block; }
+.phone-token { word-break: break-all; user-select: all; }
+.phone-urls { font-family: ui-monospace, monospace; font-size: 12px; padding-left: 18px; }
+
 .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
 
 @media (max-width: 760px) {

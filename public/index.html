@@ -15,6 +15,7 @@
     </div>
     <input id="search" class="search" type="search" placeholder="Rechercher…" aria-label="Rechercher une note">
     <ul id="note-list" class="note-list"></ul>
+    <button id="phone-btn" class="btn" type="button">📱 Connecter le téléphone</button>
     <p id="engine-info" class="engine-info"></p>
   </aside>
 
@@ -52,6 +53,11 @@
         <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
         <button id="download-audio" class="btn" type="button" hidden>Télécharger l'audio</button>
       </div>
+      <div id="remote-banner" class="remote-banner" hidden>
+        <span>Le téléphone demande de démarrer l'enregistrement. Le navigateur exige un clic sur ce PC pour partager le son.</span>
+        <button id="remote-start" class="btn record" type="button">● Démarrer maintenant</button>
+        <button id="remote-dismiss" class="btn small" type="button">Ignorer</button>
+      </div>
       <p id="rec-status" class="status" role="status"></p>
     </section>
 
@@ -85,6 +91,21 @@
   <div id="empty" class="empty">
     <p>Créez une note pour commencer.</p>
   </div>
+
+  <dialog id="phone-dialog" class="phone-dialog">
+    <h2>Connecter le téléphone</h2>
+    <ol>
+      <li>Reliez le téléphone au PC : <strong>même Wi-Fi</strong>, ou câble USB + <strong>Partage de connexion USB</strong> activé sur le téléphone (Paramètres › Réseau › Point d'accès et partage).</li>
+      <li>Dans l'app <strong>Notes Réunion</strong> du téléphone : Réglages › <strong>Scanner le QR code du PC</strong>.</li>
+    </ol>
+    <div id="phone-qr" class="phone-qr"></div>
+    <p class="muted">Adresses du PC :</p>
+    <ul id="phone-urls" class="phone-urls"></ul>
+    <p class="muted">Clé (pour une saisie manuelle) : <code id="phone-token" class="phone-token"></code></p>
+    <p id="phone-status" class="status"></p>
+    <p class="muted">Le QR code contient une clé d'accès à vos notes : ne le partagez pas. Si Windows demande d'autoriser Node.js sur le réseau, acceptez pour les réseaux privés.</p>
+    <form method="dialog"><button class="btn primary">Fermer</button></form>
+  </dialog>
 
   <script type="module" src="app.js"></script>
 </body>

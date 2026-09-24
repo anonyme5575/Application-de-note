@@ -12,6 +12,49 @@ Application de prise de notes qui enregistre en direct un appel ou une visioconf
 
 Plus un résumé, vos notes manuelles et la transcription horodatée. Toutes les cellules sont modifiables. Export en Markdown ou en CSV (compatible Excel).
 
+## App Android
+
+L'app **Notes Réunion** fonctionne de deux façons :
+
+| | Téléphone seul | Connecté au PC |
+|---|---|---|
+| Son enregistré | micro du téléphone (réunion en présentiel, ou téléphone posé près des haut-parleurs) | micro du téléphone, **ou** son de l'ordinateur capté par le PC (tous les participants de l'appel) |
+| Transcription et analyse | clés API saisies dans les Réglages de l'app, sinon analyse locale par mots-clés | faites par le PC avec ses clés (`.env`) |
+| Notes | stockées sur le téléphone | notes du PC, synchronisées en direct dans les deux sens |
+
+### Installer l'app
+
+1. Sur le téléphone, ouvrez la page **Releases** du dépôt GitHub et téléchargez le dernier `notes-reunion-1.0.N.apk` (compilé automatiquement par GitHub Actions à chaque modification).
+2. Ouvrez le fichier, puis autorisez l'installation depuis le navigateur si Android le demande.
+3. Les versions suivantes s'installent par-dessus sans effacer les notes.
+
+### Connecter le téléphone au PC
+
+1. Lancez l'application sur le PC (`npm start`) et ouvrez http://localhost:3000.
+2. Mettez le téléphone et le PC sur le même réseau :
+   - **même Wi-Fi**, ou
+   - **câble USB** : sur le téléphone, Paramètres › Réseau › Point d'accès et partage de connexion › **Partage de connexion USB**. Le PC passe alors aussi par les données mobiles du téléphone pour Internet (transcription et analyse) : comptez quelques Mo par heure de réunion.
+3. Sur le PC, cliquez sur **📱 Connecter le téléphone**. Dans l'app : Réglages › **Scanner le QR code du PC**.
+4. Si Windows demande d'autoriser Node.js sur le réseau, acceptez pour les réseaux privés.
+
+L'app se reconnecte seule quand le PC redevient joignable (en 10 s environ).
+
+### Enregistrer depuis le téléphone
+
+- **🎙 Enregistrer avec le micro du téléphone** : le téléphone enregistre et envoie des segments de 20 s à la transcription. Gardez l'app au premier plan : l'écran reste allumé, et Android coupe le micro des apps en arrière-plan.
+- **💻 Enregistrer le son de la réunion sur le PC** (note stockée sur le PC) : le PC affiche « Démarrer maintenant ». Un clic sur le PC reste obligatoire, car les navigateurs n'autorisent jamais le partage d'écran ou de son sans action de l'utilisateur. La transcription et les tableaux s'affichent ensuite en direct sur le téléphone, qui peut arrêter l'enregistrement.
+
+Le câble USB ne transporte pas le son du PC vers le téléphone : Android ne peut pas servir de micro USB au PC, ni capter le son d'un appel passé sur le téléphone lui-même. C'est pourquoi la capture du son de l'appel se fait sur le PC.
+
+### Compiler l'APK soi-même
+
+```bash
+npm ci && (cd mobile && npm ci && npm run sync)
+cd mobile/android && ./gradlew assembleRelease   # nécessite le SDK Android
+```
+
+APK produit : `mobile/android/app/build/outputs/apk/release/app-release.apk`. Pour tester l'interface mobile dans un navigateur : `cd mobile && npm run serve`, puis lancez le serveur PC avec `MOBILE_ORIGINS=http://127.0.0.1:5173`.
+
 ## Démarrage
 
 Prérequis : Node.js 20.12 ou plus récent, Chrome ou Edge.
@@ -60,17 +103,24 @@ notes (titre, texte, transcription, tableaux) ◄─► /api/notes ────�
 - Un enregistreur est redémarré à chaque segment : les fragments produits par un seul `MediaRecorder` ne sont pas lisibles séparément par l'API de transcription.
 - Les segments silencieux ne sont pas envoyés, et les phrases que Whisper invente sur du silence (« Sous-titres réalisés par la communauté d'Amara.org »…) sont filtrées.
 - L'analyse utilise `claude-opus-5` avec une sortie structurée validée par un schéma Zod (`src/analyze.js`), et le repli serveur automatique en cas de refus.
-- Le serveur n'écoute que sur `127.0.0.1` : les notes et les clés restent sur votre machine. La capture audio exige un contexte sécurisé (`localhost` ou HTTPS).
+- Le serveur écoute sur le réseau local pour l'app Android. Toute requête qui ne vient pas de la page ouverte sur le PC doit présenter la clé de jumelage (générée au premier lancement, stockée dans `data/pairing.json`). La page du PC est aussi protégée contre les appels d'autres sites ouverts dans le navigateur (contrôle des en-têtes `Origin` et `Host`). Avec `HOST=127.0.0.1`, le serveur n'est accessible que depuis le PC.
+- Pour révoquer l'accès d'un téléphone : arrêtez le serveur, supprimez `data/pairing.json`, relancez, puis rescannez le QR code.
 
 | Fichier | Contenu |
 |---|---|
-| `server.js` | API HTTP et fichiers statiques |
-| `src/analyze.js` | Extraction par Claude et extracteur local |
-| `src/transcribe.js` | Client de l'API de transcription |
+| `server.js` | Démarrage du serveur |
+| `src/app.js` | API HTTP, authentification, événements en direct, télécommande |
+| `src/pairing.js` | Clé de jumelage, adresses réseau, QR code |
+| `src/claude.js` | Extraction par Claude (partagé avec le mobile) |
+| `src/heuristic.js` | Extracteur local par mots-clés (partagé) |
+| `src/whisper.js` | Client de l'API de transcription (partagé) |
 | `src/store.js` | Stockage JSON des notes |
-| `public/recorder.js` | Capture et mixage audio, segmentation, reconnaissance du navigateur |
-| `public/app.js` | Interface |
-| `public/export.js` | Définition des tableaux, export Markdown/CSV |
+| `public/recorder.js` | Capture et mixage audio, segmentation (partagé) |
+| `public/tables.js` | Rendu des tableaux modifiables (partagé) |
+| `public/export.js` | Définition des tableaux, export Markdown/CSV (partagé) |
+| `public/app.js` | Interface du PC |
+| `mobile/src/` | App Android : interface, liaison au PC, stockage local, scanner de QR code |
+| `mobile/android/` | Projet Android (Capacitor) |
 
 ## Tests
 
