@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Notes Réunion</string>
-    <string name="title_activity_main">Notes Réunion</string>
-    <string name="package_name">fr.notesreunion.app</string>
-    <string name="custom_url_scheme">fr.notesreunion.app</string>
-</resources>
