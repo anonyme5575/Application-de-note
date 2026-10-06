@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --text: #e6edf3; --muted: #8b949e;
-    --accent: #58a6ff; --egg: #f2a7c3; --wall: #6e7681; --good: #3fb950;
+    --accent: #58a6ff; --egg: #f2a7c3; --wall: #6e7681; --good: #3fb950; --champ: #e3b341;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif;
@@ -22,7 +22,9 @@
   #wrap { flex: 1; position: relative; min-height: 0; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
   #help { position: absolute; left: 16px; bottom: 12px; color: var(--muted); font-size: 12px; pointer-events: none; }
-  #chart { position: absolute; top: auto; left: auto; right: 16px; bottom: 12px; width: 220px; height: 70px; background: #161b22cc; border-radius: 6px; }
+  .panel { position: absolute; top: auto; left: auto; right: 16px; background: #161b22cc; border-radius: 6px; }
+  #chart { bottom: 12px; width: 220px; height: 70px; }
+  #brain { bottom: 90px; width: 220px; height: 150px; }
 </style>
 </head>
 <body>
@@ -32,31 +34,43 @@
   <span class="stat">Arrivés <b id="hits">0</b>/<b id="pop">0</b></span>
   <span class="stat">Record <b id="best">0</b></span>
   <label>Population <input id="popSize" type="range" min="20" max="400" value="150"></label>
-  <label>Mutation <input id="mut" type="range" min="0" max="10" step="0.5" value="1.5"><span id="mutV">1.5%</span></label>
-  <label>Vitesse <input id="speed" type="range" min="1" max="20" value="1"><span id="speedV">×1</span></label>
+  <label>Mutation <input id="mut" type="range" min="0" max="30" step="1" value="8"><span id="mutV">8%</span></label>
+  <label>Vitesse <input id="speed" type="range" min="1" max="30" value="1"><span id="speedV">×1</span></label>
+  <label><input id="roam" type="checkbox"> Ovule mobile</label>
   <button id="pause">Pause</button>
   <button id="clearWalls">Effacer obstacles</button>
   <button id="reset">Recommencer</button>
 </header>
 <div id="wrap">
   <canvas id="c"></canvas>
-  <canvas id="chart"></canvas>
-  <div id="help">Glisser : dessiner un obstacle · Clic droit / appui long : déplacer l'ovule</div>
+  <canvas id="brain" class="panel"></canvas>
+  <canvas id="chart" class="panel"></canvas>
+  <div id="help">Glisser : dessiner un obstacle · Clic droit / appui long : déplacer l'ovule · En jaune : le champion et ses capteurs</div>
 </div>
 <script>
-// Algorithme génétique : chaque spermatozoïde porte un ADN = suite de poussées (une par pas de temps).
-// À la fin de la génération, les meilleurs se reproduisent (croisement + mutation).
-const LIFESPAN = 400, MAX_FORCE = 0.35, MAX_SPEED = 4;
+// Chaque spermatozoïde est un agent doté d'un petit réseau de neurones :
+//   perceptions (capteurs de murs, direction et distance de l'ovule, vitesse) -> décision (tourner, accélérer).
+// Les réseaux ne sont pas entraînés par gradient : ils évoluent. À chaque génération, les agents les plus
+// performants se reproduisent (croisement des poids + mutation gaussienne).
+const LIFESPAN = 500, MAX_SPEED = 4, RAY_LEN = 140, TURN = 0.2;
+const RAYS = [-1.2, -0.6, 0, 0.6, 1.2];
+const INPUT_NAMES = ['mur ←←', 'mur ←', 'mur ↑', 'mur →', 'mur →→', 'ovule sin', 'ovule cos', 'distance', 'vitesse'];
+const OUTPUT_NAMES = ['tourner', 'accélérer'];
+const N_IN = INPUT_NAMES.length, N_HID = 8, N_OUT = OUTPUT_NAMES.length;
+const N_W = (N_IN + 1) * N_HID + (N_HID + 1) * N_OUT;
+
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const chart = document.getElementById('chart'), cctx = chart.getContext('2d');
+const brainCv = document.getElementById('brain'), bctx = brainCv.getContext('2d');
 const $ = id => document.getElementById(id);
 
-let W, H, egg, start, walls = [], pop = [], step = 0, gen = 1, best = 0, history = [], paused = false;
+let W, H, egg, start, walls = [], pop = [], step = 0, gen = 1, best = 0, history = [], paused = false, champion = null;
 
 function resize() {
   const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
   cv.width = r.width * d; cv.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0);
   chart.width = 220 * d; chart.height = 70 * d; cctx.setTransform(d, 0, 0, d, 0, 0);
+  brainCv.width = 220 * d; brainCv.height = 150 * d; bctx.setTransform(d, 0, 0, d, 0, 0);
   const firstTime = !W; W = r.width; H = r.height;
   if (firstTime) { egg = { x: W - 80, y: H / 2, r: 28 }; defaultWalls(); }
   start = { x: 50, y: H / 2 };
@@ -66,78 +80,156 @@ function defaultWalls() {
            { x1: W * 0.65, y1: H * 0.35, x2: W * 0.65, y2: H * 0.85 }];
 }
 
-const randVec = () => { const a = Math.random() * Math.PI * 2, m = Math.random() * MAX_FORCE; return [Math.cos(a) * m, Math.sin(a) * m]; };
+const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+
+// Réseau 9 -> 8 (tanh) -> 2 (tanh). Les poids sont le génome de l'agent.
+function think(w, inputs) {
+  const hidden = new Array(N_HID), out = new Array(N_OUT);
+  let k = 0;
+  for (let h = 0; h < N_HID; h++) {
+    let s = w[k++];
+    for (let i = 0; i < N_IN; i++) s += w[k++] * inputs[i];
+    hidden[h] = Math.tanh(s);
+  }
+  for (let o = 0; o < N_OUT; o++) {
+    let s = w[k++];
+    for (let h = 0; h < N_HID; h++) s += w[k++] * hidden[h];
+    out[o] = Math.tanh(s);
+  }
+  return { hidden, out };
+}
+
+// Distance du premier mur (ou bord) touché par un rayon, en fraction de RAY_LEN ; 1 = rien en vue.
+function castRay(x, y, a) {
+  const bx = x + Math.cos(a) * RAY_LEN, by = y + Math.sin(a) * RAY_LEN;
+  let best = 1;
+  for (const w of allWalls) { const t = intersect(x, y, bx, by, w); if (t !== null && t < best) best = t; }
+  return best;
+}
+function intersect(ax, ay, bx, by, w) {
+  const d = (bx - ax) * (w.y2 - w.y1) - (by - ay) * (w.x2 - w.x1);
+  if (!d) return null;
+  const t = ((w.x1 - ax) * (w.y2 - w.y1) - (w.y1 - ay) * (w.x2 - w.x1)) / d;
+  const u = ((w.x1 - ax) * (by - ay) - (w.y1 - ay) * (bx - ax)) / d;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
+}
+let allWalls = [];
+const borders = () => [{ x1: 0, y1: 0, x2: W, y2: 0 }, { x1: W, y1: 0, x2: W, y2: H }, { x1: W, y1: H, x2: 0, y2: H }, { x1: 0, y1: H, x2: 0, y2: 0 }];
 
 class Sperm {
-  constructor(dna) {
-    this.dna = dna || Array.from({ length: LIFESPAN }, randVec);
-    this.x = start.x; this.y = start.y; this.vx = 0; this.vy = 0;
+  constructor(genome) {
+    this.w = genome || Array.from({ length: N_W }, gauss);
+    this.x = start.x; this.y = start.y; this.a = (Math.random() - 0.5) * 0.5; this.v = 1;
     this.hit = false; this.dead = false; this.hitStep = LIFESPAN; this.minDist = Infinity;
-    this.phase = Math.random() * 6.28;
+    this.phase = Math.random() * 6.28; this.rays = RAYS.map(() => 1); this.last = null;
+  }
+  sense() {
+    this.rays = RAYS.map(r => castRay(this.x, this.y, this.a + r));
+    const dx = egg.x - this.x, dy = egg.y - this.y, rel = Math.atan2(dy, dx) - this.a;
+    return [...this.rays.map(r => 1 - r), Math.sin(rel), Math.cos(rel),
+            Math.min(1, Math.hypot(dx, dy) / Math.hypot(W, H)), this.v / MAX_SPEED];
   }
   update() {
     if (this.hit || this.dead) return;
-    const [fx, fy] = this.dna[step];
-    this.vx += fx; this.vy += fy;
-    const s = Math.hypot(this.vx, this.vy);
-    if (s > MAX_SPEED) { this.vx *= MAX_SPEED / s; this.vy *= MAX_SPEED / s; }
-    const nx = this.x + this.vx, ny = this.y + this.vy;
-    if (nx < 0 || ny < 0 || nx > W || ny > H || walls.some(w => crosses(this.x, this.y, nx, ny, w))) { this.dead = true; return; }
-    this.x = nx; this.y = ny; this.phase += 0.5;
+    this.last = think(this.w, this.inputs = this.sense());
+    const [turn, thrust] = this.last.out;
+    this.a += turn * TURN;
+    this.v = Math.max(0.3, Math.min(MAX_SPEED, this.v + thrust * 0.3));
+    const nx = this.x + Math.cos(this.a) * this.v, ny = this.y + Math.sin(this.a) * this.v;
+    if (allWalls.some(w => intersect(this.x, this.y, nx, ny, w) !== null)) { this.dead = true; return; }
+    this.x = nx; this.y = ny; this.phase += 0.3 + this.v * 0.12;
     const d = Math.hypot(egg.x - this.x, egg.y - this.y);
     this.minDist = Math.min(this.minDist, d);
     if (d < egg.r) { this.hit = true; this.hitStep = step; }
   }
   fitness() {
     // Proche de l'ovule = mieux ; arrivé vite = beaucoup mieux ; mort contre un mur = pénalisé.
-    let f = 1 / (1 + this.minDist) ** 2;
-    if (this.hit) f = 1 + (LIFESPAN - this.hitStep) / LIFESPAN * 2;
-    if (this.dead) f *= 0.2;
+    let f = (1 - Math.min(1, this.minDist / Math.hypot(W, H))) ** 4;
+    if (this.hit) f = 2 + (LIFESPAN - this.hitStep) / LIFESPAN * 2;
+    if (this.dead) f *= 0.3;
     return f;
   }
-  draw() {
-    const a = Math.atan2(this.vy, this.vx);
-    ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(a);
-    ctx.globalAlpha = this.dead ? 0.25 : 0.9;
-    ctx.strokeStyle = this.hit ? '#3fb950' : '#c9d1d9'; ctx.lineWidth = 1;
+  draw(isChampion) {
+    if (isChampion && !this.dead && !this.hit) {
+      ctx.strokeStyle = '#e3b34166'; ctx.lineWidth = 1;
+      RAYS.forEach((r, i) => {
+        const len = this.rays[i] * RAY_LEN;
+        ctx.beginPath(); ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x + Math.cos(this.a + r) * len, this.y + Math.sin(this.a + r) * len); ctx.stroke();
+      });
+    }
+    ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.a);
+    ctx.globalAlpha = this.dead ? 0.2 : 0.9;
+    ctx.strokeStyle = isChampion ? '#e3b341' : this.hit ? '#3fb950' : '#c9d1d9';
+    ctx.lineWidth = isChampion ? 1.6 : 1;
     ctx.beginPath(); ctx.moveTo(-3, 0);
     for (let i = 1; i <= 8; i++) ctx.lineTo(-3 - i * 2, Math.sin(this.phase - i * 0.8) * i * 0.4);
     ctx.stroke();
-    ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.ellipse(0, 0, 4, 2.6, 0, 0, 6.28); ctx.fill();
+    const s = isChampion ? 1.4 : 1;
+    ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.ellipse(0, 0, 4 * s, 2.6 * s, 0, 0, 6.28); ctx.fill();
     ctx.restore();
   }
 }
 
-function crosses(ax, ay, bx, by, w) {
-  const d = (bx - ax) * (w.y2 - w.y1) - (by - ay) * (w.x2 - w.x1);
-  if (!d) return false;
-  const t = ((w.x1 - ax) * (w.y2 - w.y1) - (w.y1 - ay) * (w.x2 - w.x1)) / d;
-  const u = ((w.x1 - ax) * (by - ay) - (w.y1 - ay) * (bx - ax)) / d;
-  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+function newPopulation() { pop = Array.from({ length: +$('popSize').value }, () => new Sperm()); champion = pop[0]; step = 0; }
+
+function placeEggRandomly() {
+  for (let tries = 0; tries < 50; tries++) {
+    const x = W * (0.55 + Math.random() * 0.4), y = 40 + Math.random() * (H - 80);
+    if (walls.every(w => distToSeg(x, y, w) > egg.r + 10)) { egg.x = x; egg.y = y; return; }
+  }
+}
+function distToSeg(px, py, w) {
+  const dx = w.x2 - w.x1, dy = w.y2 - w.y1, l = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((px - w.x1) * dx + (py - w.y1) * dy) / l));
+  return Math.hypot(px - w.x1 - t * dx, py - w.y1 - t * dy);
 }
 
-function newPopulation() { pop = Array.from({ length: +$('popSize').value }, () => new Sperm()); step = 0; }
-
 function evolve() {
-  const fits = pop.map(s => s.fitness()), total = fits.reduce((a, b) => a + b, 0);
+  const fits = pop.map(s => s.fitness());
   const hits = pop.filter(s => s.hit).length;
   history.push(hits / pop.length); if (history.length > 60) history.shift();
   best = Math.max(best, hits);
-  const pick = () => { let r = Math.random() * total; for (let i = 0; i < pop.length; i++) if ((r -= fits[i]) <= 0) return pop[i]; return pop[pop.length - 1]; };
+  // Sélection par tournoi : robuste aux écarts d'échelle de la fitness.
+  const pick = () => { let b = Math.random() * pop.length | 0; for (let i = 0; i < 3; i++) { const c = Math.random() * pop.length | 0; if (fits[c] > fits[b]) b = c; } return pop[b].w; };
   const rate = +$('mut').value / 100, n = +$('popSize').value;
-  const elite = pop[fits.indexOf(Math.max(...fits))];
-  const next = [new Sperm(elite.dna.slice())];
+  const order = fits.map((f, i) => i).sort((a, b) => fits[b] - fits[a]);
+  const next = order.slice(0, 2).map(i => new Sperm(pop[i].w.slice())); // élitisme : les 2 meilleurs survivent intacts
   while (next.length < n) {
-    const a = pick().dna, b = pick().dna, cut = Math.random() * LIFESPAN | 0;
-    next.push(new Sperm(a.map((g, i) => Math.random() < rate ? randVec() : (i < cut ? g : b[i]))));
+    const a = pick(), b = pick();
+    next.push(new Sperm(a.map((g, i) => (Math.random() < 0.5 ? g : b[i]) + (Math.random() < rate ? gauss() * 0.5 : 0))));
   }
-  pop = next; step = 0; gen++;
+  pop = next; champion = pop[0]; step = 0; gen++;
+  if ($('roam').checked) placeEggRandomly();
 }
 
 function tick() {
+  allWalls = [...walls, ...borders()];
   for (const s of pop) s.update();
   step++;
   if (step >= LIFESPAN || pop.every(s => s.dead || s.hit)) evolve();
+}
+
+function drawBrain() {
+  bctx.clearRect(0, 0, 220, 150);
+  bctx.fillStyle = '#8b949e'; bctx.font = '10px system-ui'; bctx.fillText('Cerveau du champion', 6, 12);
+  const c = champion, w = c.w, act = c.last, inputs = c.inputs || new Array(N_IN).fill(0);
+  const col = (x, n, i) => ({ x, y: 22 + (i + 0.5) * (122 / n) });
+  const inP = INPUT_NAMES.map((_, i) => col(60, N_IN, i)), hidP = Array.from({ length: N_HID }, (_, i) => col(120, N_HID, i)), outP = OUTPUT_NAMES.map((_, i) => col(170, N_OUT, i));
+  const edge = (p, q, weight) => {
+    bctx.strokeStyle = weight > 0 ? `rgba(88,166,255,${Math.min(0.8, Math.abs(weight) / 3)})` : `rgba(248,81,73,${Math.min(0.8, Math.abs(weight) / 3)})`;
+    bctx.beginPath(); bctx.moveTo(p.x, p.y); bctx.lineTo(q.x, q.y); bctx.stroke();
+  };
+  bctx.lineWidth = 0.7;
+  let k = 0;
+  for (let h = 0; h < N_HID; h++) { k++; for (let i = 0; i < N_IN; i++) edge(inP[i], hidP[h], w[k++]); }
+  for (let o = 0; o < N_OUT; o++) { k++; for (let h = 0; h < N_HID; h++) edge(hidP[h], outP[o], w[k++]); }
+  const node = (p, v) => { bctx.fillStyle = `hsl(${v >= 0 ? 210 : 0} 80% ${30 + Math.abs(v) * 40}%)`; bctx.beginPath(); bctx.arc(p.x, p.y, 4, 0, 6.28); bctx.fill(); };
+  bctx.fillStyle = '#8b949e'; bctx.font = '9px system-ui'; bctx.textAlign = 'right';
+  INPUT_NAMES.forEach((name, i) => { bctx.fillStyle = '#8b949e'; bctx.fillText(name, 54, inP[i].y + 3); node(inP[i], inputs[i]); });
+  hidP.forEach((p, i) => node(p, act ? act.hidden[i] : 0));
+  bctx.textAlign = 'left';
+  OUTPUT_NAMES.forEach((name, i) => { node(outP[i], act ? act.out[i] : 0); bctx.fillStyle = '#8b949e'; bctx.fillText(name, 177, outP[i].y + 3); });
 }
 
 function draw() {
@@ -147,7 +239,8 @@ function draw() {
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(egg.x, egg.y, egg.r * 1.6, 0, 6.28); ctx.fill();
   ctx.strokeStyle = '#6e7681'; ctx.lineWidth = 6; ctx.lineCap = 'round';
   for (const w of [...walls, drawing].filter(Boolean)) { ctx.beginPath(); ctx.moveTo(w.x1, w.y1); ctx.lineTo(w.x2, w.y2); ctx.stroke(); }
-  for (const s of pop) s.draw();
+  for (const s of pop) if (s !== champion) s.draw(false);
+  champion.draw(true);
   ctx.fillStyle = '#8b949e'; ctx.fillRect(0, H - 3, W * step / LIFESPAN, 3);
   $('gen').textContent = gen; $('hits').textContent = pop.filter(s => s.hit).length;
   $('pop').textContent = pop.length; $('best').textContent = best;
@@ -156,6 +249,7 @@ function draw() {
   cctx.strokeStyle = '#3fb950'; cctx.lineWidth = 1.5; cctx.beginPath();
   history.forEach((v, i) => { const x = 6 + i * (208 / 59), y = 64 - v * 46; i ? cctx.lineTo(x, y) : cctx.moveTo(x, y); });
   cctx.stroke();
+  drawBrain();
 }
 
 function loop() {
