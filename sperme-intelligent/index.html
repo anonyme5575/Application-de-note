@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sperme intelligent</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --text: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --egg: #f2a7c3; --wall: #6e7681; --good: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif;
+         display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 16px; background: var(--panel); }
+  h1 { font-size: 16px; margin: 0 8px 0 0; }
+  .stat b { color: var(--accent); }
+  label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  input[type=range] { width: 90px; }
+  button { background: #21262d; color: var(--text); border: 1px solid #30363d; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  #wrap { flex: 1; position: relative; min-height: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #help { position: absolute; left: 16px; bottom: 12px; color: var(--muted); font-size: 12px; pointer-events: none; }
+  #chart { position: absolute; top: auto; left: auto; right: 16px; bottom: 12px; width: 220px; height: 70px; background: #161b22cc; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧬 Sperme intelligent</h1>
+  <span class="stat">Génération <b id="gen">1</b></span>
+  <span class="stat">Arrivés <b id="hits">0</b>/<b id="pop">0</b></span>
+  <span class="stat">Record <b id="best">0</b></span>
+  <label>Population <input id="popSize" type="range" min="20" max="400" value="150"></label>
+  <label>Mutation <input id="mut" type="range" min="0" max="10" step="0.5" value="1.5"><span id="mutV">1.5%</span></label>
+  <label>Vitesse <input id="speed" type="range" min="1" max="20" value="1"><span id="speedV">×1</span></label>
+  <button id="pause">Pause</button>
+  <button id="clearWalls">Effacer obstacles</button>
+  <button id="reset">Recommencer</button>
+</header>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <canvas id="chart"></canvas>
+  <div id="help">Glisser : dessiner un obstacle · Clic droit / appui long : déplacer l'ovule</div>
+</div>
+<script>
+// Algorithme génétique : chaque spermatozoïde porte un ADN = suite de poussées (une par pas de temps).
+// À la fin de la génération, les meilleurs se reproduisent (croisement + mutation).
+const LIFESPAN = 400, MAX_FORCE = 0.35, MAX_SPEED = 4;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const chart = document.getElementById('chart'), cctx = chart.getContext('2d');
+const $ = id => document.getElementById(id);
+
+let W, H, egg, start, walls = [], pop = [], step = 0, gen = 1, best = 0, history = [], paused = false;
+
+function resize() {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = r.width * d; cv.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0);
+  chart.width = 220 * d; chart.height = 70 * d; cctx.setTransform(d, 0, 0, d, 0, 0);
+  const firstTime = !W; W = r.width; H = r.height;
+  if (firstTime) { egg = { x: W - 80, y: H / 2, r: 28 }; defaultWalls(); }
+  start = { x: 50, y: H / 2 };
+}
+function defaultWalls() {
+  walls = [{ x1: W * 0.4, y1: H * 0.2, x2: W * 0.4, y2: H * 0.65 },
+           { x1: W * 0.65, y1: H * 0.35, x2: W * 0.65, y2: H * 0.85 }];
+}
+
+const randVec = () => { const a = Math.random() * Math.PI * 2, m = Math.random() * MAX_FORCE; return [Math.cos(a) * m, Math.sin(a) * m]; };
+
+class Sperm {
+  constructor(dna) {
+    this.dna = dna || Array.from({ length: LIFESPAN }, randVec);
+    this.x = start.x; this.y = start.y; this.vx = 0; this.vy = 0;
+    this.hit = false; this.dead = false; this.hitStep = LIFESPAN; this.minDist = Infinity;
+    this.phase = Math.random() * 6.28;
+  }
+  update() {
+    if (this.hit || this.dead) return;
+    const [fx, fy] = this.dna[step];
+    this.vx += fx; this.vy += fy;
+    const s = Math.hypot(this.vx, this.vy);
+    if (s > MAX_SPEED) { this.vx *= MAX_SPEED / s; this.vy *= MAX_SPEED / s; }
+    const nx = this.x + this.vx, ny = this.y + this.vy;
+    if (nx < 0 || ny < 0 || nx > W || ny > H || walls.some(w => crosses(this.x, this.y, nx, ny, w))) { this.dead = true; return; }
+    this.x = nx; this.y = ny; this.phase += 0.5;
+    const d = Math.hypot(egg.x - this.x, egg.y - this.y);
+    this.minDist = Math.min(this.minDist, d);
+    if (d < egg.r) { this.hit = true; this.hitStep = step; }
+  }
+  fitness() {
+    // Proche de l'ovule = mieux ; arrivé vite = beaucoup mieux ; mort contre un mur = pénalisé.
+    let f = 1 / (1 + this.minDist) ** 2;
+    if (this.hit) f = 1 + (LIFESPAN - this.hitStep) / LIFESPAN * 2;
+    if (this.dead) f *= 0.2;
+    return f;
+  }
+  draw() {
+    const a = Math.atan2(this.vy, this.vx);
+    ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(a);
+    ctx.globalAlpha = this.dead ? 0.25 : 0.9;
+    ctx.strokeStyle = this.hit ? '#3fb950' : '#c9d1d9'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-3, 0);
+    for (let i = 1; i <= 8; i++) ctx.lineTo(-3 - i * 2, Math.sin(this.phase - i * 0.8) * i * 0.4);
+    ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.ellipse(0, 0, 4, 2.6, 0, 0, 6.28); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function crosses(ax, ay, bx, by, w) {
+  const d = (bx - ax) * (w.y2 - w.y1) - (by - ay) * (w.x2 - w.x1);
+  if (!d) return false;
+  const t = ((w.x1 - ax) * (w.y2 - w.y1) - (w.y1 - ay) * (w.x2 - w.x1)) / d;
+  const u = ((w.x1 - ax) * (by - ay) - (w.y1 - ay) * (bx - ax)) / d;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+function newPopulation() { pop = Array.from({ length: +$('popSize').value }, () => new Sperm()); step = 0; }
+
+function evolve() {
+  const fits = pop.map(s => s.fitness()), total = fits.reduce((a, b) => a + b, 0);
+  const hits = pop.filter(s => s.hit).length;
+  history.push(hits / pop.length); if (history.length > 60) history.shift();
+  best = Math.max(best, hits);
+  const pick = () => { let r = Math.random() * total; for (let i = 0; i < pop.length; i++) if ((r -= fits[i]) <= 0) return pop[i]; return pop[pop.length - 1]; };
+  const rate = +$('mut').value / 100, n = +$('popSize').value;
+  const elite = pop[fits.indexOf(Math.max(...fits))];
+  const next = [new Sperm(elite.dna.slice())];
+  while (next.length < n) {
+    const a = pick().dna, b = pick().dna, cut = Math.random() * LIFESPAN | 0;
+    next.push(new Sperm(a.map((g, i) => Math.random() < rate ? randVec() : (i < cut ? g : b[i]))));
+  }
+  pop = next; step = 0; gen++;
+}
+
+function tick() {
+  for (const s of pop) s.update();
+  step++;
+  if (step >= LIFESPAN || pop.every(s => s.dead || s.hit)) evolve();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(egg.x, egg.y, 4, egg.x, egg.y, egg.r * 1.6);
+  g.addColorStop(0, '#ffd6e6'); g.addColorStop(0.6, '#f2a7c3'); g.addColorStop(1, '#f2a7c300');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(egg.x, egg.y, egg.r * 1.6, 0, 6.28); ctx.fill();
+  ctx.strokeStyle = '#6e7681'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  for (const w of [...walls, drawing].filter(Boolean)) { ctx.beginPath(); ctx.moveTo(w.x1, w.y1); ctx.lineTo(w.x2, w.y2); ctx.stroke(); }
+  for (const s of pop) s.draw();
+  ctx.fillStyle = '#8b949e'; ctx.fillRect(0, H - 3, W * step / LIFESPAN, 3);
+  $('gen').textContent = gen; $('hits').textContent = pop.filter(s => s.hit).length;
+  $('pop').textContent = pop.length; $('best').textContent = best;
+  cctx.clearRect(0, 0, 220, 70);
+  cctx.fillStyle = '#8b949e'; cctx.font = '10px system-ui'; cctx.fillText('% arrivés par génération', 6, 12);
+  cctx.strokeStyle = '#3fb950'; cctx.lineWidth = 1.5; cctx.beginPath();
+  history.forEach((v, i) => { const x = 6 + i * (208 / 59), y = 64 - v * 46; i ? cctx.lineTo(x, y) : cctx.moveTo(x, y); });
+  cctx.stroke();
+}
+
+function loop() {
+  if (!paused) for (let i = 0; i < +$('speed').value; i++) tick();
+  draw(); requestAnimationFrame(loop);
+}
+
+// Interaction : dessiner des murs, déplacer l'ovule.
+let drawing = null, pressTimer = null;
+const pos = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+const moveEgg = p => { egg.x = p.x; egg.y = p.y; };
+cv.addEventListener('contextmenu', e => { e.preventDefault(); moveEgg(pos(e)); });
+cv.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  const p = pos(e); drawing = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+  pressTimer = setTimeout(() => { drawing = null; moveEgg(p); }, 550);
+});
+cv.addEventListener('pointermove', e => {
+  if (!drawing) return; const p = pos(e); drawing.x2 = p.x; drawing.y2 = p.y;
+  if (Math.hypot(drawing.x2 - drawing.x1, drawing.y2 - drawing.y1) > 6) clearTimeout(pressTimer);
+});
+addEventListener('pointerup', () => {
+  clearTimeout(pressTimer);
+  if (drawing && Math.hypot(drawing.x2 - drawing.x1, drawing.y2 - drawing.y1) > 10) walls.push(drawing);
+  drawing = null;
+});
+
+$('pause').onclick = e => { paused = !paused; e.target.textContent = paused ? 'Reprendre' : 'Pause'; e.target.classList.toggle('on', paused); };
+$('clearWalls').onclick = () => { walls = []; };
+$('reset').onclick = () => { gen = 1; best = 0; history = []; newPopulation(); };
+$('mut').oninput = e => $('mutV').textContent = e.target.value + '%';
+$('speed').oninput = e => $('speedV').textContent = '×' + e.target.value;
+addEventListener('resize', resize);
+
+resize(); newPopulation(); loop();
+</script>
+</body>
+</html>
