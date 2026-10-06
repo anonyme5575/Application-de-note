@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#161b22">
 <title>Sperme intelligent</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sperme IA">
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --text: #e6edf3; --muted: #8b949e;
@@ -29,7 +36,7 @@
   #c { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   #help { position: absolute; left: 16px; bottom: 12px; color: var(--muted); font-size: 12px; pointer-events: none; }
   .panel { position: absolute; top: auto; left: auto; right: 16px; background: #161b22cc; border-radius: 6px; pointer-events: none; }
-  #chart { bottom: 12px; width: 220px; height: 70px; }
+  #chart { bottom: calc(12px + env(safe-area-inset-bottom)); width: 220px; height: 70px; }
   #brain { bottom: 90px; width: 220px; height: 150px; }
 
   /* Téléphone : barre compacte, réglages dans un menu qui se superpose au terrain. */
@@ -50,11 +57,18 @@
     .controls button { min-height: 40px; }
     #help { left: 10px; right: 10px; top: 8px; bottom: auto; font-size: 11px; }
     #help .desktop { display: none; }
-    #chart { right: 8px; bottom: 8px; width: 150px; height: 52px; }
+    #chart { right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); width: 150px; height: 52px; }
     #brain { display: none; right: 8px; bottom: 68px; width: 220px; height: 140px; }
     body.show-brain #brain { display: block; }
   }
   @media (min-width: 641px) and (min-height: 501px) { #help .mobile { display: none; } }
+  #install[hidden] { display: none; }
+  #installHelp { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px; background: #000a; }
+  #installHelp[hidden] { display: none; }
+  #installHelp .card { max-width: 340px; padding: 18px 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+  #installHelp h2 { margin: 0 0 10px; font-size: 17px; }
+  #installHelp ol { margin: 0 0 14px; padding-left: 20px; line-height: 1.6; }
+  #installHelp button { width: 100%; min-height: 40px; }
 </style>
 </head>
 <body>
@@ -74,6 +88,7 @@
     <label>Vitesse <input id="speed" type="range" min="1" max="30" value="1"><span id="speedV">×1</span></label>
     <label><input id="roam" type="checkbox"> Ovule mobile</label>
     <button id="brainToggle" class="mobile-only" type="button">Cerveau</button>
+    <button id="install" type="button" hidden>📲 Installer</button>
     <button id="pause" type="button">Pause</button>
     <button id="clearWalls" type="button">Effacer obstacles</button>
     <button id="reset" type="button">Recommencer</button>
@@ -84,6 +99,13 @@
   <canvas id="brain" class="panel"></canvas>
   <canvas id="chart" class="panel"></canvas>
   <div id="help"><span class="desktop">Glisser : dessiner un obstacle · Clic droit / appui long : déplacer l'ovule · En jaune : le champion et ses capteurs</span><span class="mobile">Glisser : obstacle · Appui long : déplacer l'ovule</span></div>
+</div>
+<div id="installHelp" role="dialog" aria-modal="true" aria-labelledby="installTitle" hidden>
+  <div class="card">
+    <h2 id="installTitle">Installer le jeu</h2>
+    <ol id="installSteps"></ol>
+    <button id="installClose" type="button">Compris</button>
+  </div>
 </div>
 <script>
 // Chaque spermatozoïde est un agent doté d'un petit réseau de neurones :
@@ -365,6 +387,44 @@ $('popSize').oninput = e => $('popV').textContent = e.target.value;
 $('mut').oninput = e => $('mutV').textContent = e.target.value + '%';
 $('speed').oninput = e => $('speedV').textContent = '×' + e.target.value;
 new ResizeObserver(resize).observe($('wrap'));
+
+// Installation comme application (PWA).
+// Android / Chrome / Edge : fenêtre d'installation native via beforeinstallprompt.
+// iPhone / iPad : Safari n'offre aucune API d'installation, on affiche la marche à suivre.
+const installBtn = $('install'), installHelp = $('installHelp');
+const standalone = matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || navigator.standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installPrompt = null;
+
+if (!standalone && isIOS) installBtn.hidden = false;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; installBtn.hidden = false; });
+addEventListener('appinstalled', () => { installPrompt = null; installBtn.hidden = true; });
+
+function showInstallHelp(steps) {
+  $('installSteps').innerHTML = steps.map(step => `<li>${step}</li>`).join('');
+  installHelp.hidden = false;
+}
+installBtn.onclick = async () => {
+  closeMenu();
+  if (installPrompt) {
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') installBtn.hidden = true;
+    installPrompt = null;
+  } else if (isIOS) {
+    showInstallHelp([
+      'Ouvrez cette page dans <b>Safari</b>.',
+      'Touchez le bouton <b>Partager</b> (carré avec une flèche vers le haut).',
+      'Choisissez <b>Sur l\'écran d\'accueil</b>, puis <b>Ajouter</b>.',
+    ]);
+  }
+};
+$('installClose').onclick = () => { installHelp.hidden = true; };
+installHelp.onclick = e => { if (e.target === installHelp) installHelp.hidden = true; };
+
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 
 resize(); newPopulation(); loop();
 </script>

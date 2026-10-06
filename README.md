@@ -6,6 +6,15 @@ Simulation dans le navigateur : des spermatozoïdes doivent atteindre l'ovule en
 
 Ouvrez `sperme-intelligent/index.html` dans un navigateur, sur ordinateur ou téléphone. Un seul fichier, aucune installation, aucune connexion requise.
 
+## Installer sur téléphone
+
+Le jeu s'installe comme une application depuis le navigateur (application web progressive) : icône sur l'écran d'accueil, plein écran, fonctionne hors connexion. Aucun store nécessaire.
+
+- **Android** (Chrome, Edge, Samsung Internet) : menu ⚙ du jeu › **📲 Installer**, ou menu du navigateur › **Installer l'application**.
+- **iPhone / iPad** : ouvrez le site dans **Safari** › bouton **Partager** › **Sur l'écran d'accueil** › **Ajouter**. Le bouton **📲 Installer** du jeu rappelle ces étapes, car Safari ne permet pas à un site de déclencher l'installation lui-même.
+
+L'installation nécessite le site en ligne (HTTPS, par exemple via Vercel) : elle ne fonctionne pas en ouvrant le fichier depuis le disque.
+
 ## Commandes
 
 | Action | Effet |
