@@ -22,20 +22,34 @@ L'installation nécessite le site en ligne (HTTPS, par exemple via Vercel) : ell
 | Glisser sur le terrain | Dessine un obstacle |
 | Clic droit ou appui long | Déplace l'ovule |
 | Population | Nombre d'agents par génération (20 à 400) |
-| Mutation | Probabilité qu'un poids du réseau soit modifié au hasard à la naissance |
+| Mutation | Probabilité qu'un poids du réseau soit modifié au hasard à la naissance (4 % par défaut) |
 | Vitesse | Accélère la simulation (×1 à ×30) |
-| Ovule mobile | Place l'ovule au hasard à chaque génération, pour vérifier que les agents généralisent |
-| Effacer obstacles / Recommencer | Retire les murs / repart de cerveaux aléatoires |
+| Terrain | Classique, Piège en U, Labyrinthe, Vide, ou Aléatoire (un nouveau terrain à chaque génération, pour apprendre à se débrouiller partout) |
+| ⚡ Turbo | Calcule autant de générations que l'appareil le permet |
+| Ovule mobile | Place l'ovule au hasard à chaque génération |
+| Effacer obstacles / Repartir de zéro | Retire les murs / efface les cerveaux appris et repart du hasard |
+
+Les cerveaux appris sont gardés dans le navigateur : en revenant sur la page, l'entraînement reprend où il s'était arrêté.
 
 Le champion de la génération est en jaune, avec ses capteurs visibles. Le panneau **Cerveau du champion** affiche son réseau en direct (bleu : positif, rouge : négatif), et la courbe verte le pourcentage d'agents arrivés à chaque génération.
 
 ## Fonctionnement
 
-1. **Perception** : à chaque instant, l'agent mesure la distance au mur le plus proche dans 5 directions, l'angle et la distance de l'ovule, et sa propre vitesse (9 entrées).
-2. **Décision** : un réseau 9 → 8 → 2 (activation `tanh`) en déduit de combien tourner et accélérer. Toucher un mur ou un bord tue l'agent.
-3. **Score** : plus l'agent s'est approché de l'ovule, meilleur il est ; l'atteindre rapporte bien plus, d'autant plus s'il arrive vite ; mourir contre un mur divise le score.
-4. **Évolution** : les 2 meilleurs passent intacts à la génération suivante. Les autres naissent de deux parents choisis par tournoi : chaque poids vient de l'un ou l'autre, puis subit éventuellement une mutation gaussienne.
+1. **Perception** : à chaque instant, l'agent mesure la distance au premier obstacle dans 7 directions, la direction et la distance de l'ovule, s'il voit l'ovule ou s'il est caché par un mur, et sa propre vitesse (12 entrées).
+2. **Mémoire et décision** : un réseau de neurones récurrent (12 entrées + 10 neurones de mémoire → 10 neurones → 2 sorties, activation `tanh`) en déduit de combien tourner et accélérer. Les neurones cachés sont réinjectés au pas suivant : l'agent se souvient de ce qu'il vient de faire et peut suivre un mur ou insister dans un contournement. Toucher un mur ou un bord le tue.
+3. **Score** : la distance qui lui reste à parcourir **en contournant les murs** (plus court chemin réel, calculé sur une grille de 8 px), et non la distance à vol d'oiseau. Foncer droit dans un mur ne rapporte rien ; trouver le passage, si. Atteindre l'ovule rapporte bien plus, d'autant plus vite. Mourir divise le score par deux. Les agents ne voient pas cette carte : elle sert uniquement à les noter.
+4. **Évolution** : les 3 meilleurs passent intacts à la génération suivante. Les autres naissent de deux parents choisis par tournoi : chaque poids vient de l'un ou l'autre, puis subit éventuellement une mutation gaussienne.
 
 Les poids ne sont jamais ajustés par rétropropagation : seule l'évolution les modifie (neuroévolution).
 
-Ordre de grandeur mesuré (150 agents, terrain par défaut) : environ 75 à 90 % d'arrivées après une centaine de générations avec l'ovule fixe, et environ 75 % en moyenne avec l'ovule mobile, ce qui montre que les agents ont appris une stratégie générale plutôt qu'un trajet.
+### Résultats mesurés
+
+150 agents, 60 générations, moyenne de 3 essais ; pourcentage d'agents arrivés sur les 10 dernières générations :
+
+| Terrain | Version précédente | Version actuelle |
+|---|---|---|
+| Classique | 77 % | 77 % |
+| Piège en U | 64 % | 65 % |
+| Labyrinthe | 35 % (un essai bloqué à 2 %) | 66 % (aucun échec) |
+
+Sur un terrain jamais vu, une population entraînée sur un seul terrain réussit 0 à 5 % dès la première génération ; entraînée 100 générations sur des terrains aléatoires, 12 à 25 %. Le pourcentage d'arrivées plafonne sous 100 % parce que chaque génération contient des enfants mutés qui explorent.

@@ -37,7 +37,7 @@
   #help { position: absolute; left: 16px; bottom: 12px; color: var(--muted); font-size: 12px; pointer-events: none; }
   .panel { position: absolute; top: auto; left: auto; right: 16px; background: #161b22cc; border-radius: 6px; pointer-events: none; }
   #chart { bottom: calc(12px + env(safe-area-inset-bottom)); width: 220px; height: 70px; }
-  #brain { bottom: 90px; width: 220px; height: 150px; }
+  #brain { bottom: 90px; width: 220px; height: 185px; }
 
   /* Téléphone : barre compacte, réglages dans un menu qui se superpose au terrain. */
   @media (max-width: 640px), (max-height: 500px) {
@@ -52,16 +52,21 @@
     .controls { display: none; position: absolute; top: 100%; left: 0; right: 0; padding: 12px 14px 14px;
                 background: var(--panel); border-bottom: 1px solid var(--border); box-shadow: 0 8px 16px #0008; }
     header.open .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .controls label:has(select) { grid-column: 1 / -1; display: grid; grid-template-columns: 88px 1fr; }
     .controls label:has(input[type=range]) { grid-column: 1 / -1; display: grid; grid-template-columns: 88px 1fr 44px; }
     input[type=range] { width: 100%; height: 28px; }
     .controls button { min-height: 40px; }
     #help { left: 10px; right: 10px; top: 8px; bottom: auto; font-size: 11px; }
     #help .desktop { display: none; }
     #chart { right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); width: 150px; height: 52px; }
-    #brain { display: none; right: 8px; bottom: 68px; width: 220px; height: 140px; }
+    #brain { display: none; right: 8px; bottom: 68px; width: 220px; height: 175px; }
     body.show-brain #brain { display: block; }
   }
   @media (min-width: 641px) and (min-height: 501px) { #help .mobile { display: none; } }
+  select { background: #21262d; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font: inherit; max-width: 100%; }
+  #toast { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); z-index: 5; padding: 8px 14px; border-radius: 8px;
+           background: var(--panel); border: 1px solid var(--border); opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap; }
+  #toast.show { opacity: 1; }
   #install[hidden] { display: none; }
   #installHelp { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px; background: #000a; }
   #installHelp[hidden] { display: none; }
@@ -84,14 +89,22 @@
   </div>
   <div class="controls" id="controls">
     <label>Population <input id="popSize" type="range" min="20" max="400" value="150"><span id="popV">150</span></label>
-    <label>Mutation <input id="mut" type="range" min="0" max="30" step="1" value="8"><span id="mutV">8%</span></label>
+    <label>Mutation <input id="mut" type="range" min="0" max="20" step="1" value="4"><span id="mutV">4%</span></label>
     <label>Vitesse <input id="speed" type="range" min="1" max="30" value="1"><span id="speedV">×1</span></label>
+    <label>Terrain <select id="terrain">
+      <option value="classique">Classique</option>
+      <option value="piege">Piège en U</option>
+      <option value="labyrinthe">Labyrinthe</option>
+      <option value="vide">Vide</option>
+      <option value="aleatoire">Aléatoire (change à chaque génération)</option>
+    </select></label>
+    <label><input id="turbo" type="checkbox"> ⚡ Turbo</label>
     <label><input id="roam" type="checkbox"> Ovule mobile</label>
     <button id="brainToggle" class="mobile-only" type="button">Cerveau</button>
     <button id="install" type="button" hidden>📲 Installer</button>
     <button id="pause" type="button">Pause</button>
     <button id="clearWalls" type="button">Effacer obstacles</button>
-    <button id="reset" type="button">Recommencer</button>
+    <button id="reset" type="button">Repartir de zéro</button>
   </div>
 </header>
 <div id="wrap">
@@ -100,6 +113,7 @@
   <canvas id="chart" class="panel"></canvas>
   <div id="help"><span class="desktop">Glisser : dessiner un obstacle · Clic droit / appui long : déplacer l'ovule · En jaune : le champion et ses capteurs</span><span class="mobile">Glisser : obstacle · Appui long : déplacer l'ovule</span></div>
 </div>
+<div id="toast" role="status" aria-live="polite"></div>
 <div id="installHelp" role="dialog" aria-modal="true" aria-labelledby="installTitle" hidden>
   <div class="card">
     <h2 id="installTitle">Installer le jeu</h2>
@@ -108,16 +122,22 @@
   </div>
 </div>
 <script>
-// Chaque spermatozoïde est un agent doté d'un petit réseau de neurones :
-//   perceptions (capteurs de murs, direction et distance de l'ovule, vitesse) -> décision (tourner, accélérer).
-// Les réseaux ne sont pas entraînés par gradient : ils évoluent. À chaque génération, les agents les plus
-// performants se reproduisent (croisement des poids + mutation gaussienne).
-const LIFESPAN = 500, MAX_SPEED = 4, RAY_LEN = 140, TURN = 0.2;
-const RAYS = [-1.2, -0.6, 0, 0.6, 1.2];
-const INPUT_NAMES = ['mur ←←', 'mur ←', 'mur ↑', 'mur →', 'mur →→', 'ovule sin', 'ovule cos', 'distance', 'vitesse'];
+// Chaque spermatozoïde est un agent piloté par un réseau de neurones récurrent (il a une mémoire) :
+//   perceptions (7 capteurs de murs, direction de l'ovule, ovule visible ou caché, distance, vitesse)
+//   + son état interne au pas précédent -> décision (tourner, accélérer) + nouvel état interne.
+// Les réseaux évoluent (neuroévolution) : les meilleurs se reproduisent, avec croisement et mutation.
+// Le score mesure la distance qu'il reste à parcourir EN CONTOURNANT les murs (plus court chemin réel),
+// pas la distance à vol d'oiseau : foncer droit dans un mur ne rapporte rien, trouver le passage si.
+const LIFESPAN = 600, MAX_SPEED = 4, RAY_LEN = 180, TURN = 0.22;
+const RAYS = [-1.4, -0.9, -0.45, 0, 0.45, 0.9, 1.4];
+const INPUT_NAMES = ['mur −80°', 'mur −50°', 'mur −25°', 'mur 0°', 'mur +25°', 'mur +50°', 'mur +80°',
+                     'ovule sin', 'ovule cos', 'ovule visible', 'distance', 'vitesse'];
 const OUTPUT_NAMES = ['tourner', 'accélérer'];
-const N_IN = INPUT_NAMES.length, N_HID = 8, N_OUT = OUTPUT_NAMES.length;
-const N_W = (N_IN + 1) * N_HID + (N_HID + 1) * N_OUT;
+const N_IN = INPUT_NAMES.length, N_HID = 10, N_OUT = OUTPUT_NAMES.length;
+// Génome : pour chaque neurone caché [biais, poids des entrées, poids de la mémoire], puis pour chaque sortie [biais, poids].
+const HID_STRIDE = 1 + N_IN + N_HID;
+const N_W = HID_STRIDE * N_HID + (N_HID + 1) * N_OUT;
+const ELITES = 3, TOURNAMENT = 4, MUTATION_SIZE = 0.35;
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const chart = document.getElementById('chart'), cctx = chart.getContext('2d');
@@ -130,16 +150,53 @@ let portrait = null, CW = 0, CH = 0, BW = 0, BH = 0;
 // Le parcours suit la plus grande dimension de l'écran : de gauche à droite à l'horizontale,
 // de bas en haut à la verticale (téléphone). Placement exprimé en fractions : p = avancée, q = côté.
 const at = (p, q) => portrait ? { x: W * q, y: H * (1 - p) } : { x: W * p, y: H * q };
-const wallAt = (p, q1, q2) => { const a = at(p, q1), b = at(p, q2); return { x1: a.x, y1: a.y, x2: b.x, y2: b.y }; };
+const seg = (a, b) => ({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+const wallAt = (p, q1, q2) => seg(at(p, q1), at(p, q2));      // mur en travers du parcours
+const wallAlong = (q, p1, p2) => seg(at(p1, q), at(p2, q));   // mur dans le sens du parcours
+
+const TERRAINS = {
+  classique: { egg: [0.93, 0.5], walls: () => [wallAt(0.4, 0.2, 0.65), wallAt(0.65, 0.35, 0.85)] },
+  piege: { egg: [0.88, 0.5], walls: () => [wallAt(0.62, 0.22, 0.78), wallAlong(0.22, 0.35, 0.62), wallAlong(0.78, 0.35, 0.62)] },
+  labyrinthe: { egg: [0.93, 0.15], walls: () => [wallAt(0.3, 0, 0.7), wallAt(0.55, 0.3, 1), wallAt(0.8, 0, 0.7)] },
+  vide: { egg: [0.93, 0.5], walls: () => [] },
+};
+
+function applyTerrain(name) {
+  if (name === 'aleatoire') return randomTerrain();
+  const t = TERRAINS[name];
+  walls = t.walls();
+  Object.assign(egg, at(...t.egg));
+  markDirty();
+}
+
+// Terrain tiré au hasard (entraînement à la généralisation) : 2 à 4 murs, ovule dans la moitié éloignée,
+// toujours atteignable.
+function randomTerrain() {
+  for (let tries = 0; tries < 30; tries++) {
+    const n = 2 + (Math.random() * 3 | 0), list = [];
+    for (let i = 0; i < n; i++) {
+      const p = 0.25 + Math.random() * 0.55, q = Math.random(), len = 0.3 + Math.random() * 0.45;
+      list.push(Math.random() < 0.75 ? wallAt(p, Math.max(0, q - len / 2), Math.min(1, q + len / 2))
+                                     : wallAlong(q, Math.max(0.2, p - len / 3), Math.min(0.85, p + len / 3)));
+    }
+    walls = list;
+    Object.assign(egg, at(0.75 + Math.random() * 0.2, 0.1 + Math.random() * 0.8));
+    markDirty(); buildField();
+    if (walls.every(w => distToSeg(egg.x, egg.y, w) > egg.r + 8) && isFinite(geo(start.x, start.y))) return;
+  }
+  applyTerrain('classique');
+}
 
 function defaultLayout() {
   portrait = H > W;
   const r = Math.max(18, Math.min(28, Math.min(W, H) * 0.06));
-  egg = { ...at(portrait ? 0.9 : 0.93, 0.5), r };
-  walls = [wallAt(0.4, 0.2, 0.65), wallAt(0.65, 0.35, 0.85)];
+  egg = { x: 0, y: 0, r };
+  placeStart();
+  applyTerrain($('terrain').value);
 }
 function placeStart() {
   start = portrait ? { x: W / 2, y: H - 40, a: -Math.PI / 2 } : { x: 50, y: H / 2, a: 0 };
+  markDirty();
 }
 
 function fitCanvas(canvas, context) {
@@ -156,8 +213,8 @@ function resize() {
   const oldW = W, oldH = H;
   W = r.width; H = r.height;
   if (!oldW || (H > W) !== portrait) {
-    // Premier affichage ou rotation de l'écran : terrain par défaut, génération en cours relancée.
-    defaultLayout(); placeStart();
+    // Premier affichage ou rotation de l'écran : terrain recalculé, génération en cours relancée.
+    defaultLayout();
     if (pop.length) { pop = pop.map(s => new Sperm(s.w)); champion = pop[0]; step = 0; }
     return;
   }
@@ -170,13 +227,23 @@ function resize() {
 
 const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
 
-// Réseau 9 -> 8 (tanh) -> 2 (tanh). Les poids sont le génome de l'agent.
-function think(w, inputs) {
-  const hidden = new Array(N_HID), out = new Array(N_OUT);
+function randomGenome() {
+  const g = new Float64Array(N_W);
+  for (let i = 0; i < N_W; i++) {
+    const inHidden = i < HID_STRIDE * N_HID, j = i % HID_STRIDE;
+    g[i] = gauss() * (inHidden && j > N_IN ? 0.4 : 1); // mémoire initialement faible : comportement stable
+  }
+  return g;
+}
+
+// Réseau récurrent : 12 entrées + 10 neurones de mémoire -> 10 neurones (tanh) -> 2 sorties (tanh).
+function think(w, inputs, memory) {
+  const hidden = new Float64Array(N_HID), out = new Array(N_OUT);
   let k = 0;
   for (let h = 0; h < N_HID; h++) {
     let s = w[k++];
     for (let i = 0; i < N_IN; i++) s += w[k++] * inputs[i];
+    for (let m = 0; m < N_HID; m++) s += w[k++] * memory[m];
     hidden[h] = Math.tanh(s);
   }
   for (let o = 0; o < N_OUT; o++) {
@@ -187,13 +254,6 @@ function think(w, inputs) {
   return { hidden, out };
 }
 
-// Distance du premier mur (ou bord) touché par un rayon, en fraction de RAY_LEN ; 1 = rien en vue.
-function castRay(x, y, a) {
-  const bx = x + Math.cos(a) * RAY_LEN, by = y + Math.sin(a) * RAY_LEN;
-  let best = 1;
-  for (const w of allWalls) { const t = intersect(x, y, bx, by, w); if (t !== null && t < best) best = t; }
-  return best;
-}
 function intersect(ax, ay, bx, by, w) {
   const d = (bx - ax) * (w.y2 - w.y1) - (by - ay) * (w.x2 - w.x1);
   if (!d) return null;
@@ -201,40 +261,124 @@ function intersect(ax, ay, bx, by, w) {
   const u = ((w.x1 - ax) * (by - ay) - (w.y1 - ay) * (bx - ax)) / d;
   return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
 }
+function distToSeg(px, py, w) {
+  const dx = w.x2 - w.x1, dy = w.y2 - w.y1, l = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((px - w.x1) * dx + (py - w.y1) * dy) / l));
+  return Math.hypot(px - w.x1 - t * dx, py - w.y1 - t * dy);
+}
 let allWalls = [];
 const borders = () => [{ x1: 0, y1: 0, x2: W, y2: 0 }, { x1: W, y1: 0, x2: W, y2: H }, { x1: W, y1: H, x2: 0, y2: H }, { x1: 0, y1: H, x2: 0, y2: 0 }];
 
+// Distance du premier mur (ou bord) touché par un rayon, en fraction de RAY_LEN ; 1 = rien en vue.
+function castRay(x, y, a) {
+  const bx = x + Math.cos(a) * RAY_LEN, by = y + Math.sin(a) * RAY_LEN;
+  let nearest = 1;
+  for (const w of allWalls) { const t = intersect(x, y, bx, by, w); if (t !== null && t < nearest) nearest = t; }
+  return nearest;
+}
+
+// Carte des distances réelles jusqu'à l'ovule (plus court chemin autour des murs), sur une grille de 8 px.
+// Sert uniquement à noter les agents : ils ne la voient pas.
+const CELL = 8;
+let field = null, fieldDirty = true, startGeo = 1;
+function markDirty() { fieldDirty = true; }
+function buildField() {
+  const cols = Math.ceil(W / CELL), rows = Math.ceil(H / CELL), n = cols * rows;
+  const blocked = new Uint8Array(n), dist = new Float64Array(n).fill(Infinity);
+  for (const w of walls) {
+    const c0 = Math.max(0, (Math.min(w.x1, w.x2) / CELL | 0) - 1), c1 = Math.min(cols - 1, (Math.max(w.x1, w.x2) / CELL | 0) + 1);
+    const r0 = Math.max(0, (Math.min(w.y1, w.y2) / CELL | 0) - 1), r1 = Math.min(rows - 1, (Math.max(w.y1, w.y2) / CELL | 0) + 1);
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++)
+      if (distToSeg((c + 0.5) * CELL, (r + 0.5) * CELL, w) < CELL * 0.75) blocked[r * cols + c] = 1;
+  }
+  // Dijkstra depuis les cellules de l'ovule (pas droit = 1, diagonale = √2), tas binaire dans des tableaux typés.
+  const cap = n * 8 + 16, keys = new Float64Array(cap), vals = new Int32Array(cap);
+  let size = 0;
+  const push = (d, i) => {
+    let j = size++;
+    while (j > 0) { const p = (j - 1) >> 1; if (keys[p] <= d) break; keys[j] = keys[p]; vals[j] = vals[p]; j = p; }
+    keys[j] = d; vals[j] = i;
+  };
+  const popMin = () => { // renvoie l'indice ; la clé est lue avant l'appel dans keys[0]
+    const top = vals[0], d = keys[--size], v = vals[size];
+    let j = 0;
+    for (;;) {
+      const l = 2 * j + 1; if (l >= size) break;
+      const m = l + 1 < size && keys[l + 1] < keys[l] ? l + 1 : l;
+      if (keys[m] >= d) break;
+      keys[j] = keys[m]; vals[j] = vals[m]; j = m;
+    }
+    keys[j] = d; vals[j] = v;
+    return top;
+  };
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const i = r * cols + c;
+    if (!blocked[i] && Math.hypot((c + 0.5) * CELL - egg.x, (r + 0.5) * CELL - egg.y) < egg.r) { dist[i] = 0; push(0, i); }
+  }
+  const DC = [1, -1, 0, 0, 1, 1, -1, -1], DR = [0, 0, 1, -1, 1, -1, 1, -1];
+  while (size > 0) {
+    const d = keys[0], i = popMin();
+    if (d > dist[i]) continue; // entrée périmée
+    const r = i / cols | 0, c = i - r * cols;
+    for (let k = 0; k < 8; k++) {
+      const nc = c + DC[k], nr = r + DR[k];
+      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+      const j = nr * cols + nc;
+      if (blocked[j]) continue;
+      if (k >= 4 && (blocked[r * cols + nc] || blocked[nr * cols + c])) continue; // pas de coin coupé
+      const nd = d + (k >= 4 ? Math.SQRT2 : 1);
+      if (nd < dist[j]) { dist[j] = nd; push(nd, j); }
+    }
+  }
+  field = { cols, rows, dist };
+  fieldDirty = false;
+  startGeo = geo(start.x, start.y);
+  if (!isFinite(startGeo)) startGeo = Math.hypot(egg.x - start.x, egg.y - start.y); // ovule enfermé : repli à vol d'oiseau
+}
+// Distance réelle restante (pixels) depuis un point ; Infinity si inaccessible.
+function geo(x, y) {
+  if (!field) return Infinity;
+  const c = Math.min(field.cols - 1, Math.max(0, x / CELL | 0)), r = Math.min(field.rows - 1, Math.max(0, y / CELL | 0));
+  return field.dist[r * field.cols + c] * CELL;
+}
+
 class Sperm {
   constructor(genome) {
-    this.w = genome || Array.from({ length: N_W }, gauss);
+    this.w = genome || randomGenome();
     this.x = start.x; this.y = start.y; this.a = start.a + (Math.random() - 0.5) * 0.5; this.v = 1;
-    this.hit = false; this.dead = false; this.hitStep = LIFESPAN; this.minDist = Infinity;
-    this.phase = Math.random() * 6.28; this.rays = RAYS.map(() => 1); this.last = null;
+    this.hit = false; this.dead = false; this.hitStep = LIFESPAN; this.minGeo = Infinity; this.minDist = Infinity;
+    this.memory = new Float64Array(N_HID);
+    this.phase = Math.random() * 6.28; this.rays = RAYS.map(() => 1); this.last = null; this.inputs = null;
   }
   sense() {
     this.rays = RAYS.map(r => castRay(this.x, this.y, this.a + r));
     const dx = egg.x - this.x, dy = egg.y - this.y, rel = Math.atan2(dy, dx) - this.a;
-    return [...this.rays.map(r => 1 - r), Math.sin(rel), Math.cos(rel),
+    const visible = walls.every(w => intersect(this.x, this.y, egg.x, egg.y, w) === null) ? 1 : -1;
+    return [...this.rays.map(r => 1 - r), Math.sin(rel), Math.cos(rel), visible,
             Math.min(1, Math.hypot(dx, dy) / Math.hypot(W, H)), this.v / MAX_SPEED];
   }
   update() {
     if (this.hit || this.dead) return;
-    this.last = think(this.w, this.inputs = this.sense());
+    this.last = think(this.w, this.inputs = this.sense(), this.memory);
+    this.memory = this.last.hidden;
     const [turn, thrust] = this.last.out;
     this.a += turn * TURN;
     this.v = Math.max(0.3, Math.min(MAX_SPEED, this.v + thrust * 0.3));
     const nx = this.x + Math.cos(this.a) * this.v, ny = this.y + Math.sin(this.a) * this.v;
     if (allWalls.some(w => intersect(this.x, this.y, nx, ny, w) !== null)) { this.dead = true; return; }
     this.x = nx; this.y = ny; this.phase += 0.3 + this.v * 0.12;
+    const g = geo(this.x, this.y);
+    if (g < this.minGeo) this.minGeo = g;
     const d = Math.hypot(egg.x - this.x, egg.y - this.y);
     this.minDist = Math.min(this.minDist, d);
     if (d < egg.r) { this.hit = true; this.hitStep = step; }
   }
   fitness() {
-    // Proche de l'ovule = mieux ; arrivé vite = beaucoup mieux ; mort contre un mur = pénalisé.
-    let f = (1 - Math.min(1, this.minDist / Math.hypot(W, H))) ** 4;
+    // Progrès sur le vrai chemin ; arrivé = beaucoup mieux, d'autant plus vite ; mort contre un mur = pénalisé.
+    const remaining = isFinite(this.minGeo) ? this.minGeo : this.minDist;
+    let f = Math.max(0, 1 - remaining / startGeo) ** 2;
     if (this.hit) f = 2 + (LIFESPAN - this.hitStep) / LIFESPAN * 2;
-    if (this.dead) f *= 0.3;
+    if (this.dead) f *= 0.5;
     return f;
   }
   draw(isChampion) {
@@ -259,19 +403,59 @@ class Sperm {
   }
 }
 
-function newPopulation() { pop = Array.from({ length: +$('popSize').value }, () => new Sperm()); champion = pop[0]; step = 0; }
+// Mémoire des cerveaux entre deux visites : les meilleurs génomes sont gardés dans le navigateur.
+const STORE = 'sperme-ia-cerveaux-v2';
+let lastSave = 0;
+function saveBrains(genomes) {
+  if (performance.now() - lastSave < 2000) return;
+  lastSave = performance.now();
+  try {
+    localStorage.setItem(STORE, JSON.stringify({ gen, best, genomes: genomes.slice(0, 20).map(g => Array.from(g, v => +v.toFixed(4))) }));
+  } catch { /* stockage indisponible (navigation privée…) : on continue sans */ }
+}
+function loadBrains() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE));
+    return d && Array.isArray(d.genomes) && d.genomes.length && d.genomes.every(g => g.length === N_W) ? d : null;
+  } catch { return null; }
+}
+function forgetBrains() { try { localStorage.removeItem(STORE); } catch {} }
+
+function breed(parents, n, rate) {
+  const next = parents.slice(0, ELITES).map(g => new Sperm(Float64Array.from(g)));
+  while (next.length < n) {
+    const a = parents[Math.random() * parents.length | 0], b = parents[Math.random() * parents.length | 0];
+    const child = new Float64Array(N_W);
+    for (let i = 0; i < N_W; i++) child[i] = (Math.random() < 0.5 ? a[i] : b[i]) + (Math.random() < rate ? gauss() * MUTATION_SIZE : 0);
+    next.push(new Sperm(child));
+  }
+  return next;
+}
+
+function newPopulation() {
+  const saved = loadBrains(), n = +$('popSize').value;
+  if (saved) {
+    gen = saved.gen; best = saved.best;
+    pop = breed(saved.genomes, n, +$('mut').value / 100);
+    toast(`🧠 Cerveaux repris : génération ${gen}`);
+  } else {
+    pop = Array.from({ length: n }, () => new Sperm());
+  }
+  champion = pop[0]; step = 0;
+}
+function resetLearning() {
+  forgetBrains();
+  gen = 1; best = 0; history = [];
+  pop = Array.from({ length: +$('popSize').value }, () => new Sperm());
+  champion = pop[0]; step = 0;
+}
 
 function placeEggRandomly() {
   for (let tries = 0; tries < 50; tries++) {
     // Moitié du terrain opposée au départ, à distance des bords et des murs.
     const { x, y } = at(0.55 + Math.random() * 0.4, Math.max(0.08, Math.min(0.92, Math.random())));
-    if (walls.every(w => distToSeg(x, y, w) > egg.r + 10)) { egg.x = x; egg.y = y; return; }
+    if (walls.every(w => distToSeg(x, y, w) > egg.r + 10)) { egg.x = x; egg.y = y; markDirty(); return; }
   }
-}
-function distToSeg(px, py, w) {
-  const dx = w.x2 - w.x1, dy = w.y2 - w.y1, l = dx * dx + dy * dy || 1;
-  const t = Math.max(0, Math.min(1, ((px - w.x1) * dx + (py - w.y1) * dy) / l));
-  return Math.hypot(px - w.x1 - t * dx, py - w.y1 - t * dy);
 }
 
 function evolve() {
@@ -279,20 +463,20 @@ function evolve() {
   const hits = pop.filter(s => s.hit).length;
   history.push(hits / pop.length); if (history.length > 60) history.shift();
   best = Math.max(best, hits);
-  // Sélection par tournoi : robuste aux écarts d'échelle de la fitness.
-  const pick = () => { let b = Math.random() * pop.length | 0; for (let i = 0; i < 3; i++) { const c = Math.random() * pop.length | 0; if (fits[c] > fits[b]) b = c; } return pop[b].w; };
-  const rate = +$('mut').value / 100, n = +$('popSize').value;
+  // Parents : tirés par tournoi (robuste aux écarts d'échelle du score). Élites : les meilleurs, recopiés intacts.
   const order = fits.map((f, i) => i).sort((a, b) => fits[b] - fits[a]);
-  const next = order.slice(0, 2).map(i => new Sperm(pop[i].w.slice())); // élitisme : les 2 meilleurs survivent intacts
-  while (next.length < n) {
-    const a = pick(), b = pick();
-    next.push(new Sperm(a.map((g, i) => (Math.random() < 0.5 ? g : b[i]) + (Math.random() < rate ? gauss() * 0.5 : 0))));
-  }
-  pop = next; champion = pop[0]; step = 0; gen++;
-  if ($('roam').checked) placeEggRandomly();
+  const tournament = () => { let b = Math.random() * pop.length | 0; for (let i = 1; i < TOURNAMENT; i++) { const c = Math.random() * pop.length | 0; if (fits[c] > fits[b]) b = c; } return pop[b].w; };
+  const ranked = order.map(i => pop[i].w);
+  const parents = [...ranked.slice(0, ELITES), ...Array.from({ length: pop.length }, tournament)];
+  pop = breed(parents, +$('popSize').value, +$('mut').value / 100);
+  champion = pop[0]; step = 0; gen++;
+  saveBrains(ranked);
+  if ($('terrain').value === 'aleatoire') randomTerrain();
+  else if ($('roam').checked) placeEggRandomly();
 }
 
 function tick() {
+  if (fieldDirty) buildField();
   allWalls = [...walls, ...borders()];
   for (const s of pop) s.update();
   step++;
@@ -302,7 +486,7 @@ function tick() {
 function drawBrain() {
   if (!BW) return; // panneau masqué
   bctx.clearRect(0, 0, BW, BH);
-  bctx.fillStyle = '#8b949e'; bctx.font = '10px system-ui'; bctx.fillText('Cerveau du champion', 6, 12);
+  bctx.fillStyle = '#8b949e'; bctx.font = '10px system-ui'; bctx.fillText('Cerveau du champion (avec mémoire)', 6, 12);
   const c = champion, w = c.w, act = c.last, inputs = c.inputs || new Array(N_IN).fill(0);
   const col = (x, n, i) => ({ x: x * BW / 220, y: 22 + (i + 0.5) * ((BH - 28) / n) });
   const inP = INPUT_NAMES.map((_, i) => col(60, N_IN, i)), hidP = Array.from({ length: N_HID }, (_, i) => col(120, N_HID, i)), outP = OUTPUT_NAMES.map((_, i) => col(170, N_OUT, i));
@@ -312,7 +496,7 @@ function drawBrain() {
   };
   bctx.lineWidth = 0.7;
   let k = 0;
-  for (let h = 0; h < N_HID; h++) { k++; for (let i = 0; i < N_IN; i++) edge(inP[i], hidP[h], w[k++]); }
+  for (let h = 0; h < N_HID; h++) { k++; for (let i = 0; i < N_IN; i++) edge(inP[i], hidP[h], w[k++]); k += N_HID; }
   for (let o = 0; o < N_OUT; o++) { k++; for (let h = 0; h < N_HID; h++) edge(hidP[h], outP[o], w[k++]); }
   const node = (p, v) => { bctx.fillStyle = `hsl(${v >= 0 ? 210 : 0} 80% ${30 + Math.abs(v) * 40}%)`; bctx.beginPath(); bctx.arc(p.x, p.y, 4, 0, 6.28); bctx.fill(); };
   bctx.fillStyle = '#8b949e'; bctx.font = '9px system-ui'; bctx.textAlign = 'right';
@@ -343,14 +527,24 @@ function draw() {
 }
 
 function loop() {
-  if (!paused) for (let i = 0; i < +$('speed').value; i++) tick();
+  if (!paused) {
+    if ($('turbo').checked) { const t0 = performance.now(); while (performance.now() - t0 < 14) tick(); } // tout le temps disponible
+    else for (let i = 0; i < +$('speed').value; i++) tick();
+  }
   draw(); requestAnimationFrame(loop);
+}
+
+let toastTimer = null;
+function toast(text) {
+  const el = $('toast');
+  el.textContent = text; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
 // Interaction : dessiner des murs, déplacer l'ovule.
 let drawing = null, pressTimer = null;
 const pos = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-const moveEgg = p => { egg.x = p.x; egg.y = p.y; };
+const moveEgg = p => { egg.x = p.x; egg.y = p.y; markDirty(); };
 cv.addEventListener('contextmenu', e => { e.preventDefault(); moveEgg(pos(e)); });
 cv.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
@@ -365,7 +559,7 @@ cv.addEventListener('pointermove', e => {
 });
 addEventListener('pointerup', () => {
   clearTimeout(pressTimer);
-  if (drawing && Math.hypot(drawing.x2 - drawing.x1, drawing.y2 - drawing.y1) > 10) walls.push(drawing);
+  if (drawing && Math.hypot(drawing.x2 - drawing.x1, drawing.y2 - drawing.y1) > 10) { walls.push(drawing); markDirty(); }
   drawing = null;
 });
 addEventListener('pointercancel', () => { clearTimeout(pressTimer); drawing = null; });
@@ -381,8 +575,9 @@ $('brainToggle').onclick = e => {
 };
 
 $('pause').onclick = e => { paused = !paused; e.target.textContent = paused ? 'Reprendre' : 'Pause'; e.target.classList.toggle('on', paused); };
-$('clearWalls').onclick = () => { walls = []; };
-$('reset').onclick = () => { gen = 1; best = 0; history = []; newPopulation(); };
+$('clearWalls').onclick = () => { walls = []; markDirty(); };
+$('reset').onclick = () => { resetLearning(); toast('Cerveaux effacés : retour au hasard'); };
+$('terrain').onchange = e => { applyTerrain(e.target.value); closeMenu(); };
 $('popSize').oninput = e => $('popV').textContent = e.target.value;
 $('mut').oninput = e => $('mutV').textContent = e.target.value + '%';
 $('speed').oninput = e => $('speedV').textContent = '×' + e.target.value;
