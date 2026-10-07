@@ -1,7 +1,7 @@
 // Service worker : rend le jeu utilisable hors connexion une fois installé.
 // Page : réseau d'abord (les mises à jour arrivent dès qu'on est en ligne), cache en secours.
 // Icônes et manifeste : cache d'abord.
-const CACHE = 'sperme-v1';
+const CACHE = 'sperme-v2';
 const SHELL = ['./', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'];
 
 self.addEventListener('install', (event) => {
